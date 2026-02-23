@@ -2,6 +2,7 @@
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local Camera = workspace.CurrentCamera
 
 local function getCamera()
@@ -281,6 +282,14 @@ local Settings = {
     GunFireDelay = 0.01,
     ManipEnabled = false,
     ManipMode = "classic",
+
+    BulletTracerEnabled = true,
+    BulletTracerLifetime = 0.35,
+    BulletTracerThickness = 2,
+
+    HitSoundEnabled = false,
+    HitSound = "Neverlose",
+    HitSoundVolume = 0.5,
 }
 
 
@@ -306,6 +315,93 @@ local gameHooks = { installed = false, warned = false, originals = {}, refs = {}
 local noRadHook = { installed = false, original = nil }
 local gunClientNewHook = { installed = false, original = nil }
 local lastReloadAt = 0
+local bulletTracers = {}
+local function asNum(value, fallback)
+    local n = tonumber(value)
+    if n ~= nil then return n end
+    return fallback
+end
+
+local hitSoundIds = {
+    Neverlose = "rbxassetid://8726881116",
+    Bell = "rbxassetid://6534947240",
+    Bubble = "rbxassetid://821439273",
+    Minecraft = "rbxassetid://4018616850",
+}
+
+local function playHitSound()
+    if not Settings.HitSoundEnabled then return end
+    local soundId = hitSoundIds[Settings.HitSound] or hitSoundIds.Neverlose
+    local sound = Instance.new("Sound")
+    sound.SoundId = soundId
+    sound.Volume = math.clamp(asNum(Settings.HitSoundVolume, 0.5), 0, 5)
+    sound.PlayOnRemove = false
+    sound.Parent = SoundService
+    sound:Play()
+    task.delay(1.5, function()
+        if sound then
+            sound:Destroy()
+        end
+    end)
+end
+
+local function addBulletTracer(fromPos, toPos)
+    if not Settings.BulletTracerEnabled then return end
+    local ok, line = pcall(Drawing.new, "Line")
+    if not ok or not line then return end
+    line.Visible = false
+    line.Thickness = math.clamp(asNum(Settings.BulletTracerThickness, 2), 1, 6)
+    line.Transparency = 1
+    line.Color = Color3.fromRGB(255, 210, 90)
+
+    bulletTracers[#bulletTracers + 1] = {
+        fromPos = fromPos,
+        toPos = toPos,
+        createdAt = tick(),
+        line = line,
+    }
+end
+
+local function clearBulletTracers()
+    for i = #bulletTracers, 1, -1 do
+        local tr = bulletTracers[i]
+        if tr and tr.line then
+            tr.line:Remove()
+        end
+        bulletTracers[i] = nil
+    end
+end
+
+local function updateBulletTracers()
+    local now = tick()
+    local life = math.clamp(asNum(Settings.BulletTracerLifetime, 0.35), 0.05, 1)
+
+    for i = #bulletTracers, 1, -1 do
+        local tr = bulletTracers[i]
+        local age = now - tr.createdAt
+        local line = tr.line
+
+        if (not Settings.BulletTracerEnabled) or age > life or not line then
+            if line then
+                line:Remove()
+            end
+            table.remove(bulletTracers, i)
+        else
+            local fromScreen, fromOn = safeWorldToViewportPoint(tr.fromPos)
+            local toScreen, toOn = safeWorldToViewportPoint(tr.toPos)
+
+            if fromScreen and toScreen and fromOn and toOn and fromScreen.Z > 0 and toScreen.Z > 0 then
+                line.From = Vector2.new(fromScreen.X, fromScreen.Y)
+                line.To = Vector2.new(toScreen.X, toScreen.Y)
+                line.Thickness = math.clamp(asNum(Settings.BulletTracerThickness, 2), 1, 6)
+                line.Transparency = math.clamp(1 - (age / life), 0.08, 1)
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+        end
+    end
+end
 
 local function newESPObject()
     local obj = {
@@ -1103,15 +1199,13 @@ local function applyGunClientMods(gun)
         local oldFire = gun.fire
 
         gun.fire = function(self, first_shot, ...)
-            if not Settings.ManipEnabled then
-                return oldFire(self, first_shot, ...)
-            end
-
             local cam = getCamera()
             local targetHead = getClosestHead()
             local originalPos = nil
+            local tracerFrom = (cam and cam.CFrame and cam.CFrame.Position) or nil
+            local manipActive = Settings.ManipEnabled
 
-            if cam and targetHead and self.FireOriginPart then
+            if manipActive and cam and targetHead and self.FireOriginPart then
                 originalPos = self.FireOriginPart.Position
                 local originPos = cam.CFrame.Position
 
@@ -1135,9 +1229,15 @@ local function applyGunClientMods(gun)
                 end
 
                 self.FireOriginPart.Position = originPos
+                tracerFrom = originPos
             end
 
             local results = { oldFire(self, first_shot, ...) }
+
+            if targetHead and tracerFrom then
+                addBulletTracer(tracerFrom, targetHead.Position)
+                playHitSound()
+            end
 
             if self.FireOriginPart then
                 local resetPos = originalPos or ((cam and cam.CFrame and cam.CFrame.Position) or self.FireOriginPart.Position)
@@ -1276,6 +1376,7 @@ RunService.RenderStepped:Connect(function()
     updateAllESP()
     updateOreESP()
     updateArrowESP()
+    updateBulletTracers()
 
     local char = LocalPlayer.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1724,6 +1825,72 @@ MiscTab:Slider({
 })
 
 MiscTab:Toggle({
+    Name = "Bullet Tracers",
+    StartingState = true,
+    Description = "Draw short-lived bullet tracer lines",
+    Callback = function(state)
+        Settings.BulletTracerEnabled = state
+    end
+})
+
+MiscTab:Slider({
+    Name = "Tracer Lifetime",
+    Default = 35,
+    Min = 5,
+    Max = 100,
+    Precision = 0,
+    Description = "Tracer life (scaled /100)",
+    Callback = function(value)
+        Settings.BulletTracerLifetime = math.clamp(toNumber(value, 35) / 100, 0.05, 1)
+    end
+})
+
+MiscTab:Slider({
+    Name = "Tracer Thickness",
+    Default = 2,
+    Min = 1,
+    Max = 6,
+    Precision = 0,
+    Description = "Bullet tracer line thickness",
+    Callback = function(value)
+        Settings.BulletTracerThickness = math.clamp(toNumber(value, 2), 1, 6)
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Hit Sound",
+    StartingState = false,
+    Description = "Play sound when a traced shot is fired",
+    Callback = function(state)
+        Settings.HitSoundEnabled = state
+    end
+})
+
+MiscTab:Dropdown({
+    Name = "Hit Sound Type",
+    StartingText = "Neverlose",
+    Description = "Choose hit sound",
+    Items = { "Neverlose", "Bell", "Bubble", "Minecraft" },
+    Callback = function(value)
+        if hitSoundIds[value] then
+            Settings.HitSound = value
+        end
+    end
+})
+
+MiscTab:Slider({
+    Name = "Hit Sound Volume",
+    Default = 5,
+    Min = 0,
+    Max = 10,
+    Precision = 0,
+    Description = "Volume (scaled /10)",
+    Callback = function(value)
+        Settings.HitSoundVolume = math.clamp(toNumber(value, 5) / 10, 0, 1)
+    end
+})
+
+MiscTab:Toggle({
     Name = "Manip Enabled",
     StartingState = false,
     Description = "Enable fire origin manipulation",
@@ -1783,6 +1950,7 @@ LocalPlayer.CharacterRemoving:Connect(function()
     holding = false
     clearOreESP()
     clearArrowESP()
+    clearBulletTracers()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -1796,6 +1964,7 @@ Players.PlayerRemoving:Connect(function(player)
     end
     clearOreESP()
     clearArrowESP()
+    clearBulletTracers()
 end)
 
 Players.PlayerAdded:Connect(function(player)
