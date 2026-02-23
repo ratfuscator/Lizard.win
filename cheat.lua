@@ -278,11 +278,9 @@ local Settings = {
 
     GunNoSpread = false,
     GunGodMode = false,
+    GunFireDelay = 0.01,
     ManipEnabled = false,
     ManipMode = "classic",
-
-    SilentNoPrediction = true,
-    SilentOffsetX = 100,
 }
 
 
@@ -1049,7 +1047,7 @@ local function getClosestHead()
                 local screenPos, onScreen = safeWorldToViewportPoint(head.Position)
                 if screenPos and onScreen and screenPos.Z > 0 then
                     local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
-                    if dist < closestDist then
+                    if dist < closestDist and dist <= Settings.FOV then
                         closestDist = dist
                         closest = head
                     end
@@ -1084,7 +1082,7 @@ local function applyGunClientMods(gun)
             gun.AnimationHandler.playTrack = function() end
         end
 
-        gun.FireDelay = 0.01
+        gun.FireDelay = math.clamp(toNumber(Settings.GunFireDelay, 0.01), 0.01, 0.05)
         gun.Range = math.huge
         if gun.MaxAmmo ~= nil then
             gun.CurrentAmmo = gun.MaxAmmo
@@ -1100,11 +1098,15 @@ local function applyGunClientMods(gun)
         end
     end
 
-    if Settings.ManipEnabled and type(gun.fire) == "function" and not gun.__linoriaManipWrapped then
+    if type(gun.fire) == "function" and not gun.__linoriaManipWrapped then
         gun.__linoriaManipWrapped = true
         local oldFire = gun.fire
 
         gun.fire = function(self, first_shot, ...)
+            if not Settings.ManipEnabled then
+                return oldFire(self, first_shot, ...)
+            end
+
             local cam = getCamera()
             local targetHead = getClosestHead()
             local originalPos = nil
@@ -1137,10 +1139,11 @@ local function applyGunClientMods(gun)
 
             local results = { oldFire(self, first_shot, ...) }
 
-            if originalPos and self.FireOriginPart then
+            if self.FireOriginPart then
+                local resetPos = originalPos or ((cam and cam.CFrame and cam.CFrame.Position) or self.FireOriginPart.Position)
                 task.delay(0.001, function()
                     if self.FireOriginPart then
-                        self.FireOriginPart.Position = originalPos
+                        self.FireOriginPart.Position = resetPos
                     end
                 end)
             end
@@ -1225,24 +1228,19 @@ local function installGameHooks()
         return gameHooks.originals.canFire(self, ...)
     end
 
-    gunClient.getfireDirection = function(self, origin, ...)
+    gunClient.getfireDirection = function(self, origin, mouse_hit, ...)
         if Settings.Enabled and Settings.AimbotType == "Silent" then
             local cam = getCamera()
             local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
-            local targetPart = getSilentTargetPart(originPos)
-            if targetPart then
-                local targetPos = Settings.SilentNoPrediction and targetPart.Position or getPredictedPosition(targetPart)
-                local dir = (targetPos - originPos)
-                if dir.Magnitude > 0.001 then
-                    local baseDir = dir.Unit
-                    if Settings.SilentOffsetX ~= 0 then
-                        return baseDir + Vector3.new(Settings.SilentOffsetX, 0, 0)
-                    end
-                    return baseDir
+            local targetHead = getClosestHead()
+            if targetHead then
+                local perfectDir = (targetHead.Position - originPos)
+                if perfectDir.Magnitude > 0.001 then
+                    return perfectDir.Unit
                 end
             end
         end
-        return gameHooks.originals.getFireDirection(self, origin, ...)
+        return gameHooks.originals.getFireDirection(self, origin, mouse_hit, ...)
     end
 
     installGunClientNewHook(gunClient)
@@ -1341,27 +1339,6 @@ CombatTab:Dropdown({
         if Settings.AimbotType == "Silent" then
             installGameHooks()
         end
-    end
-})
-
-CombatTab:Toggle({
-    Name = "Silent No Prediction",
-    StartingState = true,
-    Description = "Use current target position for silent aim",
-    Callback = function(state)
-        Settings.SilentNoPrediction = state
-    end
-})
-
-CombatTab:Slider({
-    Name = "Silent Offset X",
-    Default = 100,
-    Min = 0,
-    Max = 150,
-    Precision = 0,
-    Description = "Legacy silent direction offset",
-    Callback = function(value)
-        Settings.SilentOffsetX = math.clamp(toNumber(value, 100), 0, 150)
     end
 })
 
@@ -1731,6 +1708,18 @@ MiscTab:Toggle({
     Description = "Apply fast fire/range/ammo/recoil gun mods",
     Callback = function(state)
         Settings.GunGodMode = state
+    end
+})
+
+MiscTab:Slider({
+    Name = "Gun Fire Delay",
+    Default = 1,
+    Min = 1,
+    Max = 5,
+    Precision = 0,
+    Description = "God mode fire delay (scaled /100, 0.01 - 0.05)",
+    Callback = function(value)
+        Settings.GunFireDelay = math.clamp(toNumber(value, 1) / 100, 0.01, 0.05)
     end
 })
 
