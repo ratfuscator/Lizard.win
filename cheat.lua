@@ -281,6 +281,7 @@ local Settings = {
     GunNoSpread = false,
     GunGodMode = false,
     GunFireDelay = 0.01,
+    WallbangSpoof = false,
     ManipEnabled = false,
     ManipMode = "classic",
 
@@ -1399,14 +1400,34 @@ local function installGameHooks()
     end
 
     gunClient.getfireDirection = function(self, origin, mouse_hit, ...)
+        local cam = getCamera()
+        local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
+
+        if Settings.WallbangSpoof then
+            local spoofTarget = nil
+            local targetHead = getClosestHead()
+            if targetHead then
+                spoofTarget = targetHead.Position
+            elseif type(mouse_hit) == "table" and mouse_hit.Position then
+                spoofTarget = mouse_hit.Position
+            elseif cam and cam.CFrame then
+                spoofTarget = cam.CFrame.Position + cam.CFrame.LookVector * (self.Range or 1000)
+            end
+
+            if spoofTarget then
+                local spoofDir = spoofTarget - originPos
+                if spoofDir.Magnitude > 0.001 then
+                    return spoofDir.Unit + Vector3.new(100, 0, 0)
+                end
+            end
+        end
+
         if Settings.Enabled and Settings.AimbotType == "Silent" then
-            local cam = getCamera()
-            local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
             local targetHead = getClosestHead()
             if targetHead then
                 local perfectDir = (targetHead.Position - originPos)
                 if perfectDir.Magnitude > 0.001 then
-                    return perfectDir.Unit
+                    return perfectDir.Unit + Vector3.new(100, 0, 0)
                 end
             end
         end
@@ -1987,6 +2008,18 @@ MiscTab:Dropdown({
     Callback = function(value)
         if skyboxPresets[value] then
             Settings.SkyboxPreset = value
+        end
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Wallbang Spoof",
+    StartingState = false,
+    Description = "Spoof getfireDirection raycast path through walls",
+    Callback = function(state)
+        Settings.WallbangSpoof = state
+        if state then
+            installGameHooks()
         end
     end
 })
