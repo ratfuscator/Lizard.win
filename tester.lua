@@ -1,4 +1,4 @@
--- Linoria First-Person Aimbot
+-- Linoria First-Person BOT
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -281,7 +281,7 @@ local Settings = {
     GunNoSpread = false,
     GunGodMode = false,
     GunFireDelay = 0.01,
-    WallbangSpoof = false,
+    Wall = false,
     ManipEnabled = false,
     ManipMode = "classic",
 
@@ -1403,21 +1403,21 @@ local function installGameHooks()
         local cam = getCamera()
         local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
 
-        if Settings.WallbangSpoof then
-            local spoofTarget = nil
+        if Settings.Wall then
+            local Trgtt = nil
             local targetHead = getClosestHead()
             if targetHead then
-                spoofTarget = targetHead.Position
+                Trgtt = targetHead.Position
             elseif type(mouse_hit) == "table" and mouse_hit.Position then
-                spoofTarget = mouse_hit.Position
+                Trgtt = mouse_hit.Position
             elseif cam and cam.CFrame then
-                spoofTarget = cam.CFrame.Position + cam.CFrame.LookVector * (self.Range or 1000)
+                Trgtt = cam.CFrame.Position + cam.CFrame.LookVector * (self.Range or 1000)
             end
 
-            if spoofTarget then
-                local spoofDir = spoofTarget - originPos
-                if spoofDir.Magnitude > 0.001 then
-                    return spoofDir.Unit + Vector3.new(100, 0, 0)
+            if Trgtt then
+                local dirspf = Trgtt - originPos
+                if dirspf.Magnitude > 0.001 then
+                    return dirspf.Unit + Vector3.new(100, 0, 0)
                 end
             end
         end
@@ -2013,11 +2013,11 @@ MiscTab:Dropdown({
 })
 
 MiscTab:Toggle({
-    Name = "Wallbang Spoof",
+    Name = "Wall",
     StartingState = false,
-    Description = "Spoof getfireDirection raycast path through walls",
+    Description = "nice",
     Callback = function(state)
-        Settings.WallbangSpoof = state
+        Settings.Wall = state
         if state then
             installGameHooks()
         end
