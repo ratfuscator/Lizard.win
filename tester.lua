@@ -2,6 +2,8 @@
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
 
 local function getCamera()
@@ -278,11 +280,22 @@ local Settings = {
 
     GunNoSpread = false,
     GunGodMode = false,
+    GunFireDelay = 0.01,
+    WallbangSpoof = false,
     ManipEnabled = false,
     ManipMode = "classic",
 
-    SilentNoPrediction = true,
-    SilentOffsetX = 100,
+    BulletTracerEnabled = true,
+    BulletTracerLifetime = 0.35,
+    BulletTracerThickness = 2,
+
+    HitSoundEnabled = false,
+    HitSound = "Neverlose",
+    HitSoundVolume = 0.5,
+
+    NoFog = false,
+    SkyboxEnabled = false,
+    SkyboxPreset = "Purple",
 }
 
 
@@ -308,6 +321,158 @@ local gameHooks = { installed = false, warned = false, originals = {}, refs = {}
 local noRadHook = { installed = false, original = nil }
 local gunClientNewHook = { installed = false, original = nil }
 local lastReloadAt = 0
+local bulletTracers = {}
+local function asNum(value, fallback)
+    local n = tonumber(value)
+    if n ~= nil then return n end
+    return fallback
+end
+
+local hitSoundIds = {
+    Neverlose = "rbxassetid://8726881116",
+    Bell = "rbxassetid://6534947240",
+    Bubble = "rbxassetid://821439273",
+    Minecraft = "rbxassetid://4018616850",
+}
+
+local originalFog = {
+    FogStart = Lighting.FogStart,
+    FogEnd = Lighting.FogEnd,
+    FogColor = Lighting.FogColor,
+}
+
+local skyboxPresets = {
+    Purple = {
+        SkyboxBk = "rbxassetid://159454299",
+        SkyboxDn = "rbxassetid://159454296",
+        SkyboxFt = "rbxassetid://159454293",
+        SkyboxLf = "rbxassetid://159454286",
+        SkyboxRt = "rbxassetid://159454300",
+        SkyboxUp = "rbxassetid://159454288",
+    },
+    Galaxy = {
+        SkyboxBk = "rbxassetid://149397692",
+        SkyboxDn = "rbxassetid://149397686",
+        SkyboxFt = "rbxassetid://149397697",
+        SkyboxLf = "rbxassetid://149397684",
+        SkyboxRt = "rbxassetid://149397688",
+        SkyboxUp = "rbxassetid://149397702",
+    },
+    Vibe = {
+        SkyboxBk = "rbxassetid://1417494030",
+        SkyboxDn = "rbxassetid://1417494146",
+        SkyboxFt = "rbxassetid://1417494253",
+        SkyboxLf = "rbxassetid://1417494402",
+        SkyboxRt = "rbxassetid://1417494499",
+        SkyboxUp = "rbxassetid://1417494643",
+    },
+}
+
+local function applyWorldVisuals()
+    if Settings.NoFog then
+        Lighting.FogStart = 0
+        Lighting.FogEnd = 1e10
+        Lighting.FogColor = Color3.new(1, 1, 1)
+    else
+        Lighting.FogStart = originalFog.FogStart
+        Lighting.FogEnd = originalFog.FogEnd
+        Lighting.FogColor = originalFog.FogColor
+    end
+
+    local existingSky = Lighting:FindFirstChild("__linoriaSkybox")
+    if not Settings.SkyboxEnabled then
+        if existingSky then
+            existingSky:Destroy()
+        end
+        return
+    end
+
+    local preset = skyboxPresets[Settings.SkyboxPreset] or skyboxPresets.Purple
+    local sky = existingSky
+    if not sky then
+        sky = Instance.new("Sky")
+        sky.Name = "__linoriaSkybox"
+        sky.Parent = Lighting
+    end
+
+    for prop, id in pairs(preset) do
+        sky[prop] = id
+    end
+end
+
+local function playHitSound()
+    if not Settings.HitSoundEnabled then return end
+    local soundId = hitSoundIds[Settings.HitSound] or hitSoundIds.Neverlose
+    local sound = Instance.new("Sound")
+    sound.SoundId = soundId
+    sound.Volume = math.clamp(asNum(Settings.HitSoundVolume, 0.5), 0, 5)
+    sound.PlayOnRemove = false
+    sound.Parent = SoundService
+    sound:Play()
+    task.delay(1.5, function()
+        if sound then
+            sound:Destroy()
+        end
+    end)
+end
+
+local function addBulletTracer(fromPos, toPos)
+    if not Settings.BulletTracerEnabled then return end
+    local ok, line = pcall(Drawing.new, "Line")
+    if not ok or not line then return end
+    line.Visible = false
+    line.Thickness = math.clamp(asNum(Settings.BulletTracerThickness, 2), 1, 6)
+    line.Transparency = 1
+    line.Color = Color3.fromRGB(255, 210, 90)
+
+    bulletTracers[#bulletTracers + 1] = {
+        fromPos = fromPos,
+        toPos = toPos,
+        createdAt = tick(),
+        line = line,
+    }
+end
+
+local function clearBulletTracers()
+    for i = #bulletTracers, 1, -1 do
+        local tr = bulletTracers[i]
+        if tr and tr.line then
+            tr.line:Remove()
+        end
+        bulletTracers[i] = nil
+    end
+end
+
+local function updateBulletTracers()
+    local now = tick()
+    local life = math.clamp(asNum(Settings.BulletTracerLifetime, 0.35), 0.05, 1)
+
+    for i = #bulletTracers, 1, -1 do
+        local tr = bulletTracers[i]
+        local age = now - tr.createdAt
+        local line = tr.line
+
+        if (not Settings.BulletTracerEnabled) or age > life or not line then
+            if line then
+                line:Remove()
+            end
+            table.remove(bulletTracers, i)
+        else
+            local fromScreen, fromOn = safeWorldToViewportPoint(tr.fromPos)
+            local toScreen, toOn = safeWorldToViewportPoint(tr.toPos)
+
+            if fromScreen and toScreen and fromOn and toOn and fromScreen.Z > 0 and toScreen.Z > 0 then
+                line.From = Vector2.new(fromScreen.X, fromScreen.Y)
+                line.To = Vector2.new(toScreen.X, toScreen.Y)
+                line.Thickness = math.clamp(asNum(Settings.BulletTracerThickness, 2), 1, 6)
+                line.Transparency = math.clamp(1 - (age / life), 0.08, 1)
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+        end
+    end
+end
 
 local function newESPObject()
     local obj = {
@@ -1049,7 +1214,7 @@ local function getClosestHead()
                 local screenPos, onScreen = safeWorldToViewportPoint(head.Position)
                 if screenPos and onScreen and screenPos.Z > 0 then
                     local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
-                    if dist < closestDist then
+                    if dist < closestDist and dist <= Settings.FOV then
                         closestDist = dist
                         closest = head
                     end
@@ -1084,7 +1249,7 @@ local function applyGunClientMods(gun)
             gun.AnimationHandler.playTrack = function() end
         end
 
-        gun.FireDelay = 0.01
+        gun.FireDelay = math.clamp(toNumber(Settings.GunFireDelay, 0.01), 0.01, 0.05)
         gun.Range = math.huge
         if gun.MaxAmmo ~= nil then
             gun.CurrentAmmo = gun.MaxAmmo
@@ -1100,7 +1265,7 @@ local function applyGunClientMods(gun)
         end
     end
 
-    if Settings.ManipEnabled and type(gun.fire) == "function" and not gun.__linoriaManipWrapped then
+    if type(gun.fire) == "function" and not gun.__linoriaManipWrapped then
         gun.__linoriaManipWrapped = true
         local oldFire = gun.fire
 
@@ -1108,8 +1273,10 @@ local function applyGunClientMods(gun)
             local cam = getCamera()
             local targetHead = getClosestHead()
             local originalPos = nil
+            local tracerFrom = (cam and cam.CFrame and cam.CFrame.Position) or nil
+            local manipActive = Settings.ManipEnabled
 
-            if cam and targetHead and self.FireOriginPart then
+            if manipActive and cam and targetHead and self.FireOriginPart then
                 originalPos = self.FireOriginPart.Position
                 local originPos = cam.CFrame.Position
 
@@ -1133,14 +1300,21 @@ local function applyGunClientMods(gun)
                 end
 
                 self.FireOriginPart.Position = originPos
+                tracerFrom = originPos
             end
 
             local results = { oldFire(self, first_shot, ...) }
 
-            if originalPos and self.FireOriginPart then
+            if targetHead and tracerFrom then
+                addBulletTracer(tracerFrom, targetHead.Position)
+                playHitSound()
+            end
+
+            if self.FireOriginPart then
+                local resetPos = originalPos or ((cam and cam.CFrame and cam.CFrame.Position) or self.FireOriginPart.Position)
                 task.delay(0.001, function()
                     if self.FireOriginPart then
-                        self.FireOriginPart.Position = originalPos
+                        self.FireOriginPart.Position = resetPos
                     end
                 end)
             end
@@ -1225,24 +1399,39 @@ local function installGameHooks()
         return gameHooks.originals.canFire(self, ...)
     end
 
-    gunClient.getfireDirection = function(self, origin, ...)
-        if Settings.Enabled and Settings.AimbotType == "Silent" then
-            local cam = getCamera()
-            local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
-            local targetPart = getSilentTargetPart(originPos)
-            if targetPart then
-                local targetPos = Settings.SilentNoPrediction and targetPart.Position or getPredictedPosition(targetPart)
-                local dir = (targetPos - originPos)
-                if dir.Magnitude > 0.001 then
-                    local baseDir = dir.Unit
-                    if Settings.SilentOffsetX ~= 0 then
-                        return baseDir + Vector3.new(Settings.SilentOffsetX, 0, 0)
-                    end
-                    return baseDir
+    gunClient.getfireDirection = function(self, origin, mouse_hit, ...)
+        local cam = getCamera()
+        local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
+
+        if Settings.WallbangSpoof then
+            local spoofTarget = nil
+            local targetHead = getClosestHead()
+            if targetHead then
+                spoofTarget = targetHead.Position
+            elseif type(mouse_hit) == "table" and mouse_hit.Position then
+                spoofTarget = mouse_hit.Position
+            elseif cam and cam.CFrame then
+                spoofTarget = cam.CFrame.Position + cam.CFrame.LookVector * (self.Range or 1000)
+            end
+
+            if spoofTarget then
+                local spoofDir = spoofTarget - originPos
+                if spoofDir.Magnitude > 0.001 then
+                    return spoofDir.Unit + Vector3.new(100, 0, 0)
                 end
             end
         end
-        return gameHooks.originals.getFireDirection(self, origin, ...)
+
+        if Settings.Enabled and Settings.AimbotType == "Silent" then
+            local targetHead = getClosestHead()
+            if targetHead then
+                local perfectDir = (targetHead.Position - originPos)
+                if perfectDir.Magnitude > 0.001 then
+                    return perfectDir.Unit + Vector3.new(100, 0, 0)
+                end
+            end
+        end
+        return gameHooks.originals.getFireDirection(self, origin, mouse_hit, ...)
     end
 
     installGunClientNewHook(gunClient)
@@ -1278,6 +1467,8 @@ RunService.RenderStepped:Connect(function()
     updateAllESP()
     updateOreESP()
     updateArrowESP()
+    updateBulletTracers()
+    applyWorldVisuals()
 
     local char = LocalPlayer.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1341,27 +1532,6 @@ CombatTab:Dropdown({
         if Settings.AimbotType == "Silent" then
             installGameHooks()
         end
-    end
-})
-
-CombatTab:Toggle({
-    Name = "Silent No Prediction",
-    StartingState = true,
-    Description = "Use current target position for silent aim",
-    Callback = function(state)
-        Settings.SilentNoPrediction = state
-    end
-})
-
-CombatTab:Slider({
-    Name = "Silent Offset X",
-    Default = 100,
-    Min = 0,
-    Max = 150,
-    Precision = 0,
-    Description = "Legacy silent direction offset",
-    Callback = function(value)
-        Settings.SilentOffsetX = math.clamp(toNumber(value, 100), 0, 150)
     end
 })
 
@@ -1734,6 +1904,126 @@ MiscTab:Toggle({
     end
 })
 
+MiscTab:Slider({
+    Name = "Gun Fire Delay",
+    Default = 1,
+    Min = 1,
+    Max = 5,
+    Precision = 0,
+    Description = "God mode fire delay (scaled /100, 0.01 - 0.05)",
+    Callback = function(value)
+        Settings.GunFireDelay = math.clamp(toNumber(value, 1) / 100, 0.01, 0.05)
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Bullet Tracers",
+    StartingState = true,
+    Description = "Draw short-lived bullet tracer lines",
+    Callback = function(state)
+        Settings.BulletTracerEnabled = state
+    end
+})
+
+MiscTab:Slider({
+    Name = "Tracer Lifetime",
+    Default = 35,
+    Min = 5,
+    Max = 100,
+    Precision = 0,
+    Description = "Tracer life (scaled /100)",
+    Callback = function(value)
+        Settings.BulletTracerLifetime = math.clamp(toNumber(value, 35) / 100, 0.05, 1)
+    end
+})
+
+MiscTab:Slider({
+    Name = "Tracer Thickness",
+    Default = 2,
+    Min = 1,
+    Max = 6,
+    Precision = 0,
+    Description = "Bullet tracer line thickness",
+    Callback = function(value)
+        Settings.BulletTracerThickness = math.clamp(toNumber(value, 2), 1, 6)
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Hit Sound",
+    StartingState = false,
+    Description = "Play sound when a traced shot is fired",
+    Callback = function(state)
+        Settings.HitSoundEnabled = state
+    end
+})
+
+MiscTab:Dropdown({
+    Name = "Hit Sound Type",
+    StartingText = "Neverlose",
+    Description = "Choose hit sound",
+    Items = { "Neverlose", "Bell", "Bubble", "Minecraft" },
+    Callback = function(value)
+        if hitSoundIds[value] then
+            Settings.HitSound = value
+        end
+    end
+})
+
+MiscTab:Slider({
+    Name = "Hit Sound Volume",
+    Default = 5,
+    Min = 0,
+    Max = 10,
+    Precision = 0,
+    Description = "Volume (scaled /10)",
+    Callback = function(value)
+        Settings.HitSoundVolume = math.clamp(toNumber(value, 5) / 10, 0, 1)
+    end
+})
+
+MiscTab:Toggle({
+    Name = "No Fog",
+    StartingState = false,
+    Description = "Disable map fog",
+    Callback = function(state)
+        Settings.NoFog = state
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Custom Skybox",
+    StartingState = false,
+    Description = "Enable custom skybox",
+    Callback = function(state)
+        Settings.SkyboxEnabled = state
+    end
+})
+
+MiscTab:Dropdown({
+    Name = "Skybox Preset",
+    StartingText = "Purple",
+    Description = "Custom skybox preset",
+    Items = { "Purple", "Galaxy", "Vibe" },
+    Callback = function(value)
+        if skyboxPresets[value] then
+            Settings.SkyboxPreset = value
+        end
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Wallbang Spoof",
+    StartingState = false,
+    Description = "Spoof getfireDirection raycast path through walls",
+    Callback = function(state)
+        Settings.WallbangSpoof = state
+        if state then
+            installGameHooks()
+        end
+    end
+})
+
 MiscTab:Toggle({
     Name = "Manip Enabled",
     StartingState = false,
@@ -1794,6 +2084,7 @@ LocalPlayer.CharacterRemoving:Connect(function()
     holding = false
     clearOreESP()
     clearArrowESP()
+    clearBulletTracers()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -1807,6 +2098,7 @@ Players.PlayerRemoving:Connect(function(player)
     end
     clearOreESP()
     clearArrowESP()
+    clearBulletTracers()
 end)
 
 Players.PlayerAdded:Connect(function(player)
