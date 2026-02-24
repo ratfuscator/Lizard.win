@@ -275,8 +275,6 @@ local Settings = {
     Jumpshoot = false,
     NoFallDamage = false,
     NoRadiation = false,
-    HitRemoteInspector = false,
-    HitRemoteInspectorCooldown = 1.0,
 
     LongRangePositionSpoofEnabled = false,
     LongRangePositionSpoofDistance = 100,
@@ -329,7 +327,6 @@ local gunClientNewHook = { installed = false, original = nil }
 local lastReloadAt = 0
 local bulletTracers = {}
 local lastLongRangeSpoofNotice = 0
-local lastHitInspectorNotice = 0
 local function asNum(value, fallback)
     local n = tonumber(value)
     if n ~= nil then return n end
@@ -1471,22 +1468,6 @@ local function installNoRadiationHook()
     old = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod and getnamecallmethod()
 
-        if method == "FireServer" and Settings.HitRemoteInspector then
-            local okPath, isGunHit = pcall(function()
-                return self == game:GetService("ReplicatedStorage").Gun.Remotes.Hit
-            end)
-            if okPath and isGunHit then
-                local now = tick()
-                local cooldown = math.clamp(toNumber(Settings.HitRemoteInspectorCooldown, 1.0), 0.2, 10)
-                if now - lastHitInspectorNotice >= cooldown then
-                    local args = { ... }
-                    local firstType = typeof(args[1])
-                    local secondType = typeof(args[2])
-                    notify(string.format("Hit inspector: FireServer arg1=%s arg2=%s", tostring(firstType), tostring(secondType)))
-                    lastHitInspectorNotice = now
-                end
-            end
-        end
 
         if Settings.NoRadiation and method == "FireServer" and tostring(self.Name) == "EnteredRadiationZone" then
             return task.wait(9e9)
@@ -2129,28 +2110,6 @@ MiscTab:Toggle({
     Description = "Blocks EnteredRadiationZone remote",
     Callback = function(state)
         Settings.NoRadiation = state
-    end
-})
-
-MiscTab:Toggle({
-    Name = "Hit Remote Inspector",
-    StartingState = false,
-    Description = "Logs Gun.Remotes.Hit arg types (read-only)",
-    Callback = function(state)
-        Settings.HitRemoteInspector = state
-        notify(state and "Hit inspector ON" or "Hit inspector OFF")
-    end
-})
-
-MiscTab:Slider({
-    Name = "Hit Inspector Cooldown",
-    Default = 10,
-    Min = 2,
-    Max = 100,
-    Precision = 0,
-    Description = "Notify interval (/10 sec)",
-    Callback = function(value)
-        Settings.HitRemoteInspectorCooldown = math.clamp(toNumber(value, 10) / 10, 0.2, 10)
     end
 })
 
