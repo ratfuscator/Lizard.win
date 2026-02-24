@@ -3,6 +3,7 @@ local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
 
 local function getCamera()
@@ -290,6 +291,10 @@ local Settings = {
     HitSoundEnabled = false,
     HitSound = "Neverlose",
     HitSoundVolume = 0.5,
+
+    NoFog = false,
+    SkyboxEnabled = false,
+    SkyboxPreset = "Purple",
 }
 
 
@@ -328,6 +333,71 @@ local hitSoundIds = {
     Bubble = "rbxassetid://821439273",
     Minecraft = "rbxassetid://4018616850",
 }
+
+local originalFog = {
+    FogStart = Lighting.FogStart,
+    FogEnd = Lighting.FogEnd,
+    FogColor = Lighting.FogColor,
+}
+
+local skyboxPresets = {
+    Purple = {
+        SkyboxBk = "rbxassetid://159454299",
+        SkyboxDn = "rbxassetid://159454296",
+        SkyboxFt = "rbxassetid://159454293",
+        SkyboxLf = "rbxassetid://159454286",
+        SkyboxRt = "rbxassetid://159454300",
+        SkyboxUp = "rbxassetid://159454288",
+    },
+    Galaxy = {
+        SkyboxBk = "rbxassetid://149397692",
+        SkyboxDn = "rbxassetid://149397686",
+        SkyboxFt = "rbxassetid://149397697",
+        SkyboxLf = "rbxassetid://149397684",
+        SkyboxRt = "rbxassetid://149397688",
+        SkyboxUp = "rbxassetid://149397702",
+    },
+    Vibe = {
+        SkyboxBk = "rbxassetid://1417494030",
+        SkyboxDn = "rbxassetid://1417494146",
+        SkyboxFt = "rbxassetid://1417494253",
+        SkyboxLf = "rbxassetid://1417494402",
+        SkyboxRt = "rbxassetid://1417494499",
+        SkyboxUp = "rbxassetid://1417494643",
+    },
+}
+
+local function applyWorldVisuals()
+    if Settings.NoFog then
+        Lighting.FogStart = 0
+        Lighting.FogEnd = 1e10
+        Lighting.FogColor = Color3.new(1, 1, 1)
+    else
+        Lighting.FogStart = originalFog.FogStart
+        Lighting.FogEnd = originalFog.FogEnd
+        Lighting.FogColor = originalFog.FogColor
+    end
+
+    local existingSky = Lighting:FindFirstChild("__linoriaSkybox")
+    if not Settings.SkyboxEnabled then
+        if existingSky then
+            existingSky:Destroy()
+        end
+        return
+    end
+
+    local preset = skyboxPresets[Settings.SkyboxPreset] or skyboxPresets.Purple
+    local sky = existingSky
+    if not sky then
+        sky = Instance.new("Sky")
+        sky.Name = "__linoriaSkybox"
+        sky.Parent = Lighting
+    end
+
+    for prop, id in pairs(preset) do
+        sky[prop] = id
+    end
+end
 
 local function playHitSound()
     if not Settings.HitSoundEnabled then return end
@@ -1377,6 +1447,7 @@ RunService.RenderStepped:Connect(function()
     updateOreESP()
     updateArrowESP()
     updateBulletTracers()
+    applyWorldVisuals()
 
     local char = LocalPlayer.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1887,6 +1958,36 @@ MiscTab:Slider({
     Description = "Volume (scaled /10)",
     Callback = function(value)
         Settings.HitSoundVolume = math.clamp(toNumber(value, 5) / 10, 0, 1)
+    end
+})
+
+MiscTab:Toggle({
+    Name = "No Fog",
+    StartingState = false,
+    Description = "Disable map fog",
+    Callback = function(state)
+        Settings.NoFog = state
+    end
+})
+
+MiscTab:Toggle({
+    Name = "Custom Skybox",
+    StartingState = false,
+    Description = "Enable custom skybox",
+    Callback = function(state)
+        Settings.SkyboxEnabled = state
+    end
+})
+
+MiscTab:Dropdown({
+    Name = "Skybox Preset",
+    StartingText = "Purple",
+    Description = "Custom skybox preset",
+    Items = { "Purple", "Galaxy", "Vibe" },
+    Callback = function(value)
+        if skyboxPresets[value] then
+            Settings.SkyboxPreset = value
+        end
     end
 })
 
