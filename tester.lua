@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Camera = workspace.CurrentCamera
 
 local function getCamera()
@@ -275,6 +276,9 @@ local Settings = {
     NoFallDamage = false,
     NoRadiation = false,
 
+    LongRangePositionSpoofEnabled = false,
+    LongRangePositionSpoofDistance = 100,
+
     AutoReload = false,
     AutoReloadCooldown = 0.35,
 
@@ -322,6 +326,7 @@ local noRadHook = { installed = false, original = nil }
 local gunClientNewHook = { installed = false, original = nil }
 local lastReloadAt = 0
 local bulletTracers = {}
+local lastLongRangeSpoofNotice = 0
 local function asNum(value, fallback)
     local n = tonumber(value)
     if n ~= nil then return n end
@@ -1403,6 +1408,22 @@ local function installGameHooks()
         local cam = getCamera()
         local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
 
+        -- audit-only safety block: this does not mutate buffer/remote payloads.
+        if Settings.LongRangePositionSpoofEnabled then
+            local targetHead = getClosestHead()
+            if targetHead then
+                local distance = (targetHead.Position - originPos).Magnitude
+                local threshold = math.clamp(toNumber(Settings.LongRangePositionSpoofDistance, 100), 20, 2000)
+                if distance >= threshold then
+                    local now = tick()
+                    if now - lastLongRangeSpoofNotice > 1.25 then
+                        notify(string.format("Long Range Spoof: ON | audit distance %.0f (>= %.0f)", distance, threshold))
+                        lastLongRangeSpoofNotice = now
+                    end
+                end
+            end
+        end
+
         if Settings.Wall then
             local Trgtt = nil
             local targetHead = getClosestHead()
@@ -1446,6 +1467,8 @@ local function installNoRadiationHook()
     local old
     old = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod and getnamecallmethod()
+
+
         if Settings.NoRadiation and method == "FireServer" and tostring(self.Name) == "EnteredRadiationZone" then
             return task.wait(9e9)
         end
@@ -1863,6 +1886,26 @@ MiscTab:Toggle({
     Callback = function(state)
         Settings.OreSulfur = state
     end
+})
+
+MiscTab:Toggle({
+    Name = "Long Range Position Spoof",
+    StartingState = Settings.LongRangePositionSpoofEnabled,
+    Callback = function(state)
+        Settings.LongRangePositionSpoofEnabled = state
+        notify(state and "Long Range Spoof: ON (audit-only, no packet spoof)" or "Long Range Spoof: OFF")
+    end,
+})
+
+MiscTab:Slider({
+    Name = "Long Range Spoof Distance",
+    Min = 20,
+    Max = 2000,
+    Default = Settings.LongRangePositionSpoofDistance,
+    Precision = 0,
+    Callback = function(value)
+        Settings.LongRangePositionSpoofDistance = math.clamp(toNumber(value, 100), 20, 2000)
+    end,
 })
 
 MiscTab:Toggle({
