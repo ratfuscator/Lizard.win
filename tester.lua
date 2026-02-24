@@ -276,8 +276,6 @@ local Settings = {
     NoFallDamage = false,
     NoRadiation = false,
 
-    AdminPanelDamageEnabled = false,
-    AdminPanelDamageAmount = 25,
     LongRangePositionSpoofEnabled = false,
     LongRangePositionSpoofDistance = 100,
 
@@ -421,29 +419,6 @@ local function playHitSound()
             sound:Destroy()
         end
     end)
-end
-
-local function fireAdminPanelDamageTest()
-    if not Settings.AdminPanelDamageEnabled then
-        notify("Admin damage is disabled")
-        return
-    end
-
-    local target = getClosestPlayer()
-    if not target then
-        notify("No target in FOV")
-        return
-    end
-
-    local remotesFolder = ReplicatedStorage:FindFirstChild("AdminRemotes")
-    local damageRemote = remotesFolder and remotesFolder:FindFirstChild("TestDamage")
-    if not (damageRemote and damageRemote:IsA("RemoteEvent")) then
-        notify("Admin remote missing: ReplicatedStorage.AdminRemotes.TestDamage")
-        return
-    end
-
-    damageRemote:FireServer(target, math.clamp(toNumber(Settings.AdminPanelDamageAmount, 25), 1, 200))
-    notify("Sent admin damage test -> " .. target.Name)
 end
 
 local function addBulletTracer(fromPos, toPos)
@@ -1909,32 +1884,6 @@ MiscTab:Toggle({
     Callback = function(state)
         Settings.OreSulfur = state
     end
-})
-
-MiscTab:Toggle({
-    Name = "Admin Damage Enabled",
-    StartingState = false,
-    Description = "Enable safe admin TestDamage remote calls",
-    Callback = function(state)
-        Settings.AdminPanelDamageEnabled = state
-    end
-})
-
-MiscTab:Slider({
-    Name = "Admin Damage Amount",
-    Default = 25,
-    Min = 1,
-    Max = 200,
-    Precision = 0,
-    Description = "Damage used with AdminRemotes.TestDamage",
-    Callback = function(value)
-        Settings.AdminPanelDamageAmount = math.clamp(toNumber(value, 25), 1, 200)
-    end
-})
-
-MiscTab:Button({
-    Name = "Fire Admin Damage (Closest Target)",
-    Callback = fireAdminPanelDamageTest,
 })
 
 MiscTab:Toggle({
