@@ -52,7 +52,7 @@ if not ok or not Library or not ThemeManager or not SaveManager then
 end
 
 local Window = Library:CreateWindow({
-    Title = "Aimbot + FOV",
+    Title = "R.A.T. | really accesible truth.",
     Center = true,
     AutoShow = true,
     TabPadding = 8,
