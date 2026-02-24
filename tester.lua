@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Camera = workspace.CurrentCamera
 
 local function getCamera()
@@ -275,6 +276,11 @@ local Settings = {
     NoFallDamage = false,
     NoRadiation = false,
 
+    AdminPanelDamageEnabled = false,
+    AdminPanelDamageAmount = 25,
+    LongRangeRegAuditEnabled = false,
+    LongRangeRegAuditDistance = 100,
+
     AutoReload = false,
     AutoReloadCooldown = 0.35,
 
@@ -322,6 +328,7 @@ local noRadHook = { installed = false, original = nil }
 local gunClientNewHook = { installed = false, original = nil }
 local lastReloadAt = 0
 local bulletTracers = {}
+local lastLongRangeAuditNotice = 0
 local function asNum(value, fallback)
     local n = tonumber(value)
     if n ~= nil then return n end
@@ -414,6 +421,29 @@ local function playHitSound()
             sound:Destroy()
         end
     end)
+end
+
+local function fireAdminPanelDamageTest()
+    if not Settings.AdminPanelDamageEnabled then
+        notify("Admin damage is disabled")
+        return
+    end
+
+    local target = getClosestPlayer()
+    if not target then
+        notify("No target in FOV")
+        return
+    end
+
+    local remotesFolder = ReplicatedStorage:FindFirstChild("AdminRemotes")
+    local damageRemote = remotesFolder and remotesFolder:FindFirstChild("TestDamage")
+    if not (damageRemote and damageRemote:IsA("RemoteEvent")) then
+        notify("Admin remote missing: ReplicatedStorage.AdminRemotes.TestDamage")
+        return
+    end
+
+    damageRemote:FireServer(target, math.clamp(toNumber(Settings.AdminPanelDamageAmount, 25), 1, 200))
+    notify("Sent admin damage test -> " .. target.Name)
 end
 
 local function addBulletTracer(fromPos, toPos)
@@ -1403,6 +1433,21 @@ local function installGameHooks()
         local cam = getCamera()
         local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
 
+        if Settings.LongRangeRegAuditEnabled then
+            local targetHead = getClosestHead()
+            if targetHead then
+                local distance = (targetHead.Position - originPos).Magnitude
+                local threshold = math.clamp(toNumber(Settings.LongRangeRegAuditDistance, 100), 20, 2000)
+                if distance >= threshold then
+                    local now = tick()
+                    if now - lastLongRangeAuditNotice > 1.25 then
+                        notify(string.format("Long-range audit: %.0f studs (>= %.0f)", distance, threshold))
+                        lastLongRangeAuditNotice = now
+                    end
+                end
+            end
+        end
+
         if Settings.Wall then
             local Trgtt = nil
             local targetHead = getClosestHead()
@@ -1863,6 +1908,52 @@ MiscTab:Toggle({
     Callback = function(state)
         Settings.OreSulfur = state
     end
+})
+
+MiscTab:Toggle({
+    Name = "Admin Damage Enabled",
+    StartingState = false,
+    Description = "Enable safe admin TestDamage remote calls",
+    Callback = function(state)
+        Settings.AdminPanelDamageEnabled = state
+    end
+})
+
+MiscTab:Slider({
+    Name = "Admin Damage Amount",
+    Default = 25,
+    Min = 1,
+    Max = 200,
+    Precision = 0,
+    Description = "Damage used with AdminRemotes.TestDamage",
+    Callback = function(value)
+        Settings.AdminPanelDamageAmount = math.clamp(toNumber(value, 25), 1, 200)
+    end
+})
+
+MiscTab:Button({
+    Name = "Fire Admin Damage (Closest Target)",
+    Callback = fireAdminPanelDamageTest,
+})
+
+MiscTab:Toggle({
+    Name = "Long Range Reg Audit",
+    StartingState = Settings.LongRangeRegAuditEnabled,
+    Callback = function(state)
+        Settings.LongRangeRegAuditEnabled = state
+        notify(state and "Long-range audit ON (no spoofing)" or "Long-range audit OFF")
+    end,
+})
+
+MiscTab:Slider({
+    Name = "Long Range Audit Distance",
+    Min = 20,
+    Max = 2000,
+    Default = Settings.LongRangeRegAuditDistance,
+    Precision = 0,
+    Callback = function(value)
+        Settings.LongRangeRegAuditDistance = math.clamp(toNumber(value, 100), 20, 2000)
+    end,
 })
 
 MiscTab:Toggle({
