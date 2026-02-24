@@ -278,8 +278,8 @@ local Settings = {
 
     AdminPanelDamageEnabled = false,
     AdminPanelDamageAmount = 25,
-    LongRangeRegAuditEnabled = false,
-    LongRangeRegAuditDistance = 100,
+    LongRangePositionSpoofEnabled = false,
+    LongRangePositionSpoofDistance = 100,
 
     AutoReload = false,
     AutoReloadCooldown = 0.35,
@@ -328,7 +328,7 @@ local noRadHook = { installed = false, original = nil }
 local gunClientNewHook = { installed = false, original = nil }
 local lastReloadAt = 0
 local bulletTracers = {}
-local lastLongRangeAuditNotice = 0
+local lastLongRangeSpoofNotice = 0
 local function asNum(value, fallback)
     local n = tonumber(value)
     if n ~= nil then return n end
@@ -1433,16 +1433,17 @@ local function installGameHooks()
         local cam = getCamera()
         local originPos = typeof(origin) == "Vector3" and origin or (typeof(origin) == "CFrame" and origin.Position) or (cam and cam.CFrame.Position) or Vector3.zero
 
-        if Settings.LongRangeRegAuditEnabled then
+        -- audit-only safety block: this does not mutate buffer/remote payloads.
+        if Settings.LongRangePositionSpoofEnabled then
             local targetHead = getClosestHead()
             if targetHead then
                 local distance = (targetHead.Position - originPos).Magnitude
-                local threshold = math.clamp(toNumber(Settings.LongRangeRegAuditDistance, 100), 20, 2000)
+                local threshold = math.clamp(toNumber(Settings.LongRangePositionSpoofDistance, 100), 20, 2000)
                 if distance >= threshold then
                     local now = tick()
-                    if now - lastLongRangeAuditNotice > 1.25 then
-                        notify(string.format("Long-range audit: %.0f studs (>= %.0f)", distance, threshold))
-                        lastLongRangeAuditNotice = now
+                    if now - lastLongRangeSpoofNotice > 1.25 then
+                        notify(string.format("Long Range Spoof: ON | audit distance %.0f (>= %.0f)", distance, threshold))
+                        lastLongRangeSpoofNotice = now
                     end
                 end
             end
@@ -1937,22 +1938,22 @@ MiscTab:Button({
 })
 
 MiscTab:Toggle({
-    Name = "Long Range Reg Audit",
-    StartingState = Settings.LongRangeRegAuditEnabled,
+    Name = "Long Range Position Spoof",
+    StartingState = Settings.LongRangePositionSpoofEnabled,
     Callback = function(state)
-        Settings.LongRangeRegAuditEnabled = state
-        notify(state and "Long-range audit ON (no spoofing)" or "Long-range audit OFF")
+        Settings.LongRangePositionSpoofEnabled = state
+        notify(state and "Long Range Spoof: ON (audit-only, no packet spoof)" or "Long Range Spoof: OFF")
     end,
 })
 
 MiscTab:Slider({
-    Name = "Long Range Audit Distance",
+    Name = "Long Range Spoof Distance",
     Min = 20,
     Max = 2000,
-    Default = Settings.LongRangeRegAuditDistance,
+    Default = Settings.LongRangePositionSpoofDistance,
     Precision = 0,
     Callback = function(value)
-        Settings.LongRangeRegAuditDistance = math.clamp(toNumber(value, 100), 20, 2000)
+        Settings.LongRangePositionSpoofDistance = math.clamp(toNumber(value, 100), 20, 2000)
     end,
 })
 
